@@ -24,6 +24,15 @@ pipeline {
                 '''
             }
         }
+
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    set -eu
+                    docker build -t github-gists-api:${BUILD_NUMBER} .
+                '''
+            }
+        }
     }
 
     post {
