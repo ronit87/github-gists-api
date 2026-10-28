@@ -4,18 +4,20 @@ pipeline {
 
     options {
         timestamps()
+        disableConcurrentBuilds()
+    }
+
+    environment {
+        DOCKERHUB_REPO = 'ronit87/github-gists-api'
+        IMAGE_NAME = 'github-gists-api'
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
         stage('Run Python Unit Tests') {
             steps {
                 sh '''
+                    set -eu
+
                     docker run --rm \
                       -v "$WORKSPACE:/app" \
                       -w /app \
@@ -29,20 +31,53 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    docker build -t github-gists-api:${BUILD_NUMBER} .
-                    docker images github-gists-api
+
+                    docker build \
+                      -t "$IMAGE_NAME:$BUILD_NUMBER" .
+
+                    docker images "$IMAGE_NAME"
                 '''
+            }
+        }
+
+        stage('Push Image to Docker Hub') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKERHUB_USER',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+                        set +x
+
+                        trap 'docker logout >/dev/null 2>&1 || true' EXIT
+
+                        printf '%s' "$DOCKERHUB_TOKEN" |
+                            docker login \
+                                --username "$DOCKERHUB_USER" \
+                                --password-stdin
+
+                        docker tag \
+                            "$IMAGE_NAME:$BUILD_NUMBER" \
+                            "$DOCKERHUB_REPO:$BUILD_NUMBER"
+
+                        docker push "$DOCKERHUB_REPO:$BUILD_NUMBER"
+                    '''
+                }
             }
         }
     }
 
     post {
         success {
-            echo 'CI passed: all Python unit tests succeeded.'
+            echo "CI/CD image publishing succeeded: ${env.DOCKERHUB_REPO}:${env.BUILD_NUMBER}"
         }
 
         failure {
-            echo 'CI failed: inspect the Console Output for the error.'
+            echo 'Pipeline failed. Inspect Console Output for the first failing stage.'
         }
 
         always {
