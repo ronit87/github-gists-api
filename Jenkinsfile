@@ -30,6 +30,7 @@ pipeline {
                 sh '''
                     set -eu
                     docker build -t github-gists-api:${BUILD_NUMBER} .
+                    docker images github-gists-api
                 '''
             }
         }
