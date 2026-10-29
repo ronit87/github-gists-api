@@ -40,8 +40,5 @@ jobs:
         ls -la
         find . -maxdepth 3 -type f | sort
 
-    - name: Run tests
+    - name: Run tests with pytest
       run: python -m pytest -v
-    - name: Test with pytest
-      run: |
-        pytest
