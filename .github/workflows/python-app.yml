@@ -39,6 +39,15 @@ jobs:
         pwd
         ls -la
         find . -maxdepth 3 -type f | sort
-
     - name: Run tests with pytest
       run: python -m unittest discover -s tests -v
+    - name: Build docker image
+      run: docker build -t %IMAGE_NAME% .
+    - name: Deploy docker image
+      run: |
+        docker rm -f %CONTAINER_NAME% 2>NUL || true
+        docker run -d --name %CONTAINER_NAME% -p 127.0.0.1:8080:8080 %IMAGE_NAME%
+    - name: Smoke Test
+      run: |
+        sleep 5
+        curl -f http://127.0.0.1:8080/octocat --wait 10 --retry 5 --retry-delay 5
