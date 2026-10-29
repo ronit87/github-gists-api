@@ -18,6 +18,15 @@ pipeline {
                 sh '''
                     set -eu
 
+                    echo "DOCKER_HOST=${DOCKER_HOST:-not set}"
+                    echo "DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-not set}"
+                    echo "DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-not set}"
+
+                    getent hosts docker || true
+
+                    docker version
+                    docker info
+
                     docker run --rm \
                       -v "$WORKSPACE:/app" \
                       -w /app \
