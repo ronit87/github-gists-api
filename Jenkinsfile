@@ -53,7 +53,7 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'dockerhub-credentials',
+                        credentialsId: 'gists-api-app-docker',
                         usernameVariable: 'DOCKERHUB_USER',
                         passwordVariable: 'DOCKERHUB_TOKEN'
                     )
