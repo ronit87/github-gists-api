@@ -41,4 +41,4 @@ jobs:
         find . -maxdepth 3 -type f | sort
 
     - name: Run tests with pytest
-      run: python -m pytest -v
+      run: python -m unittest discover -s tests -v
