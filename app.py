@@ -49,6 +49,9 @@ class GistsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # The only supported route is /<username>.
         username = self.path.strip("/")
+        if self.path == "/health":
+            self.send_json(200, {"status": "healthy"})
+            return
         if not username or "/" in username:
             self.send_json(404, {"error": "Use GET /<username>"})
             return
