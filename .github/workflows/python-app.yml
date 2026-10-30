@@ -1,53 +1,226 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
 
-name: Python application
+name: Python Gist API - Build and Deploy to EKS
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: read
 
-jobs:
-  build:
+env:
+  IMAGE_NAME: ronit87/github-gists-api
+  AWS_REGION: ap-southeast-2
+  EKS_CLUSTER_NAME: github-gists-eks
+  K8S_NAMESPACE: github-gists
+  DEPLOYMENT_NAME: github-gists-api
+  CONTAINER_NAME: github-gists-api
 
-    runs-on: ubuntu-latest
+jobs:
+
+  # -----------------------------------------------
+  # JOB 1: Python linting and unit testing
+  # -----------------------------------------------
+
+  build-test:
+    name: Build and Test
+    runs-on: self-hosted
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Set up Python 3.13
-      uses: actions/setup-python@v3
-      with:
-        python-version: "3.13"
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Inspect project structure
-      run: |
-        pwd
-        ls -la
-        find . -maxdepth 3 -type f | sort
-    - name: Run tests with pytest
-      run: python -m unittest discover -s tests -v
-    - name: Build docker image
-      run: docker build -t %IMAGE_NAME% .
-    - name: Deploy docker image
-      run: |
-        docker rm -f %CONTAINER_NAME% 2>NUL || true
-        docker run -d --name %CONTAINER_NAME% -p 127.0.0.1:8080:8080 %IMAGE_NAME%
-    - name: Smoke Test
-      run: |
-        sleep 5
-        curl -f http://127.0.0.1:8080/octocat --wait 10 --retry 5 --retry-delay 5
+      - name: Checkout source code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Lint with flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 \
+            --show-source --statistics
+
+          flake8 . --count --exit-zero \
+            --max-complexity=10 \
+            --max-line-length=127 \
+            --statistics
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -s tests -v
+
+      - name: Build Docker image
+        if: github.event_name == 'push'
+        run: |
+          docker build \
+            -t ${{ env.IMAGE_NAME }}:${{ github.sha }} .
+
+  # -----------------------------------------------
+  # JOB 2: Push Docker image and deploy to EKS
+  # -----------------------------------------------
+
+  deploy-eks:
+    name: Deploy to AWS EKS
+    needs: build-test
+
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: self-hosted
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------
+      # Docker Hub authentication
+      # -------------------------------------------
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # -------------------------------------------
+      # Build and push Docker image
+      # -------------------------------------------
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      # -------------------------------------------
+      # AWS OIDC authentication
+      # -------------------------------------------
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # -------------------------------------------
+      # Configure EKS access
+      # -------------------------------------------
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
+
+      - name: Verify EKS connection
+        run: |
+          kubectl get nodes
+          kubectl get namespaces
+
+      # -------------------------------------------
+      # Create namespace
+      # -------------------------------------------
+
+      - name: Create Kubernetes namespace
+        run: |
+          kubectl create namespace $K8S_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # -------------------------------------------
+      # Verify namespace
+      # -------------------------------------------
+
+      - name: Verify Kubernetes namespace
+        run: |
+          kubectl get namespace github-gists
+
+      # -------------------------------------------
+      # Create or update Docker Hub secret
+      # -------------------------------------------
+
+      - name: Configure Docker Hub credentials
+        run: |
+          kubectl create secret docker-registry dockerhub-creds \
+            --namespace $K8S_NAMESPACE \
+            --docker-server=https://index.docker.io/v1/ \
+            --docker-username="${{ secrets.DOCKERHUB_USERNAME }}" \
+            --docker-password="${{ secrets.DOCKERHUB_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # -------------------------------------------
+      # Deploy application
+      # -------------------------------------------
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/deployment.yaml
+
+      - name: Update application image
+        run: |
+          kubectl set image \
+            deployment/$DEPLOYMENT_NAME \
+            $CONTAINER_NAME=${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --namespace=$K8S_NAMESPACE
+
+      # -------------------------------------------
+      # Wait for deployment
+      # -------------------------------------------
+
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status \
+            deployment/$DEPLOYMENT_NAME \
+            --namespace=$K8S_NAMESPACE \
+            --timeout=180s
+
+      # -------------------------------------------
+      # Application smoke test
+      # -------------------------------------------
+
+      - name: Smoke test application
+        shell: bash
+        run: |
+          set -e
+
+          kubectl port-forward \
+            -n $K8S_NAMESPACE \
+            service/$DEPLOYMENT_NAME \
+            18080:80 > /tmp/port-forward.log 2>&1 &
+
+          PF_PID=$!
+          trap 'kill $PF_PID 2>/dev/null || true' EXIT
+
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:18080/health; then
+              echo "Application health check passed"
+              break
+            fi
+
+            if [ "$i" -eq 30 ]; then
+              cat /tmp/port-forward.log
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          curl -fsS http://127.0.0.1:18080/octocat \
+            -o /tmp/api-response.json
+
+          echo "Gist API smoke test passed"
+          cat /tmp/api-response.json
