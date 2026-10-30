@@ -23,7 +23,7 @@ env:
 jobs:
   build-test:
     name: Build and Test
-    runs-on: [self-hosted, linux, x64, eks-deployer]
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - name: Checkout source code
@@ -44,7 +44,7 @@ jobs:
     name: Build and Deploy to EKS
     needs: build-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64, eks-deployer]
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - name: Checkout source code
