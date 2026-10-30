@@ -32,12 +32,24 @@ jobs:
       - name: Run Python lint and unit tests
         run: |
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/app" \
             -w /app \
             python:3.13-slim \
             sh -c '
               set -e
-              python -m unittest discover -s tests -v
+
+              python -m venv /tmp/test-venv
+
+              /tmp/test-venv/bin/pip install --no-cache-dir flake8
+
+              if [ -f requirements.txt ]; then
+                /tmp/test-venv/bin/pip install --no-cache-dir -r requirements.txt
+              fi
+
+              /tmp/test-venv/bin/flake8 . --count --select=E9,F63,F7,F82 --show-source
+
+              /tmp/test-venv/bin/python -m unittest discover -s tests -v
             '
 
   deploy:
